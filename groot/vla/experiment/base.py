@@ -843,12 +843,10 @@ class BaseExperiment(ABC):
         ckpt_format_callback = CheckpointFormatCallback(run_name=run_name, exp_cfg_dir=exp_cfg_dir)
         trainer.add_callback(ckpt_format_callback)
 
-        # Fractional epoch must be injected BEFORE wandb's callback consumes the
-        # logs dict — transformers callbacks run in registration order, and the
-        # wandb integration is added by the trainer's __init__, so this add comes
-        # later, but the wandb on_log re-reads logs[...] each call so any earlier
-        # mutation still propagates. Adding before LossLoggerCallback ensures the
-        # JSONL also picks up the corrected epoch.
+        # Fractional epoch must run BEFORE ProgressCallback (tqdm) and WandbCallback
+        # so the displayed dict and the wandb metrics see the override.
+        # transformers callback_handler iterates callbacks in list order, so we
+        # insert at index 0 rather than using add_callback (which appends).
         # Compute total dataset samples from the underlying single datasets in
         # the mixture (not len(train_dataloader), which counts shard-schedule
         # iterations rather than one real pass over the data).
@@ -866,12 +864,20 @@ class BaseExperiment(ABC):
             * world_size
             * int(training_args.gradient_accumulation_steps)
         )
-        trainer.add_callback(
-            FractionalEpochCallback(
-                total_dataset_samples=total_dataset_samples,
-                global_batch_size=global_batch_size,
-            )
+        epoch_cb = FractionalEpochCallback(
+            total_dataset_samples=total_dataset_samples,
+            global_batch_size=global_batch_size,
         )
+        # Register the instance with the handler's bookkeeping (sets up state hooks),
+        # then promote it to position 0 so it runs before all other callbacks.
+        trainer.add_callback(epoch_cb)
+        try:
+            handler_cbs = trainer.callback_handler.callbacks
+            if epoch_cb in handler_cbs:
+                handler_cbs.remove(epoch_cb)
+            handler_cbs.insert(0, epoch_cb)
+        except Exception:
+            pass  # Fallback: leave at the end; loss_log will still be correct.
 
         loss_log_path = str(Path(training_args.output_dir) / "loss_log.jsonl")
         trainer.add_callback(LossLoggerCallback(output_path=loss_log_path))
