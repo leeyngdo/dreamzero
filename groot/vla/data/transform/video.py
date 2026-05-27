@@ -244,13 +244,15 @@ class VideoCrop(VideoTransform):
             Callable: If mode is "train", return a random crop transform. If mode is "eval", return a center crop transform.
         """
         # 1. Check the input resolution
-        assert (
-           len(set(self.original_resolutions.values())) == 1
-        ), f"All video keys must have the same resolution, got: {self.original_resolutions}"
         if self.height is None:
+            # Auto-detect from dataset metadata; requires all views to share resolution.
             assert self.width is None, "Height and width must be either both provided or both None"
+            assert (
+                len(set(self.original_resolutions.values())) == 1
+            ), f"All video keys must have the same resolution, got: {self.original_resolutions}"
             self.width, self.height = self.original_resolutions[self.apply_to[0]]
         else:
+            # Explicit height/width: caller is responsible for unifying input via an upstream resize.
             assert (
                 self.width is not None
             ), "Height and width must be either both provided or both None"
@@ -620,6 +622,63 @@ class VideoToNumpy(VideoTransform):
         """
         frames = (frames.permute(0, 2, 3, 1) * 255).to(torch.uint8)
         return frames.cpu().numpy()
+
+
+class VideoPerViewResize(ModalityTransform):
+    """Resize each view's frames to a common (height, width) independently.
+
+    Unlike VideoResize, this transform does not concatenate views before resizing,
+    so it tolerates heterogeneous source resolutions across views. Intended as the
+    first video transform for datasets whose camera streams have different native
+    sizes (e.g. Genie Sim G1: top_head=1280x800, hand_*=848x480). Once it runs,
+    subsequent VideoTransform-based steps see uniformly sized views and can use
+    the standard concatenation fast path.
+
+    Input per key: np.ndarray of shape (T, H, W, C), dtype uint8.
+    Output per key: np.ndarray of shape (T, height, width, C), dtype uint8.
+    """
+
+    height: int = Field(..., description="Target height for all views")
+    width: int = Field(..., description="Target width for all views")
+    interpolation: str = Field(default="linear", description="cv2 interpolation mode")
+
+    _INTERP_MAP: ClassVar[dict[str, int]] = PrivateAttr({
+        "nearest": cv2.INTER_NEAREST,
+        "linear": cv2.INTER_LINEAR,
+        "cubic": cv2.INTER_CUBIC,
+        "area": cv2.INTER_AREA,
+        "lanczos4": cv2.INTER_LANCZOS4,
+    })
+
+    def set_metadata(self, dataset_metadata: DatasetMetadata):
+        # ComposedModalityTransform calls set_metadata on each transform in order.
+        # If this transform runs first, mutate the shared dataset_metadata so
+        # downstream VideoTransform.set_metadata() reads our post-resize sizes
+        # (which subsequent transforms then enforce in check_input).
+        super().set_metadata(dataset_metadata)
+        new_res = (self.width, self.height)
+        for key in self.apply_to:
+            split_keys = key.split(".")
+            if len(split_keys) != 2:
+                continue
+            sub_key = split_keys[1]
+            if sub_key in dataset_metadata.modalities.video:
+                dataset_metadata.modalities.video[sub_key].resolution = new_res
+
+    def apply(self, data: dict[str, Any]) -> dict[str, Any]:
+        interp = self._INTERP_MAP[self.interpolation]
+        for key in self.apply_to:
+            frames = data[key]
+            assert isinstance(frames, np.ndarray), f"{key} is not a numpy array"
+            assert frames.ndim == 4, f"{key} expected (T, H, W, C), got shape {frames.shape}"
+            t, h, w, c = frames.shape
+            if h == self.height and w == self.width:
+                continue
+            out = np.empty((t, self.height, self.width, c), dtype=frames.dtype)
+            for i in range(t):
+                out[i] = cv2.resize(frames[i], (self.width, self.height), interpolation=interp)
+            data[key] = out
+        return data
 
 
 class VideoMergeTimeBatch(ModalityTransform):

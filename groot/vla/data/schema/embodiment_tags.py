@@ -153,6 +153,11 @@ class EmbodimentTag(Enum):
     """
     AGIBOT = "agibot"
 
+    GENIE_SIM = "genie_sim"
+    """
+    The AgiBot Genie Sim G1 dataset (place_object_into_box task family).
+    """
+
     YAM = "yam"
 
     DREAM = "dream"

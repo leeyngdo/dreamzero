@@ -18,6 +18,7 @@ from .video import (
     VideoCrop,
     VideoGrayscale,
     VideoHorizontalFlip,
+    VideoPerViewResize,
     VideoRandomGrayscale,
     VideoRandomPosterize,
     VideoRandomRotation,

@@ -40,3 +40,6 @@ embodiment_tag_to_projector_index:
   sim_behavior_r1_pro: 31
   mecka_hands: 27
   real_r1_pro_sharpa: 28
+  # genie_sim shares the agibot projector (26) so the AgiBot pretrained
+  # projector weights are the starting point for full fine-tuning.
+  genie_sim: 26
