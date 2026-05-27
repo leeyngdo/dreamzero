@@ -83,15 +83,29 @@ LAYERNORM_LAYERS = [
 class FractionalEpochCallback(TrainerCallback):
     """Inject a real fractional epoch into the trainer's log dict.
 
-    transformers.Trainer doesn't compute epoch for IterableDataset (it falls back
-    to 0.0). We know steps_per_epoch from len(train_dataloader) at init time, so
-    we can derive `global_step / steps_per_epoch` directly. Runs before the wandb
-    callback's on_log so the override propagates to wandb and to any later
-    file-logging callbacks (e.g. LossLoggerCallback).
+    transformers.Trainer can't compute epoch for IterableDataset (no __len__ at
+    the Trainer level), so logs always show epoch=0.0. We compute it as
+    `samples_seen / total_dataset_samples` where samples_seen =
+    global_step * global_batch_size and total_dataset_samples is the sum of the
+    underlying single-dataset lengths in the mixture.
+
+    Note we deliberately don't use len(train_dataloader) — for our
+    ShardedLeRobotMixtureDataset that returns the planned shard *schedule*
+    length (capped at num_shards_to_sample ~2^20), which can be many orders
+    of magnitude larger than one real pass through the data, producing
+    misleadingly tiny epoch values.
     """
 
-    def __init__(self, steps_per_epoch: int | None):
-        self.steps_per_epoch = steps_per_epoch if steps_per_epoch and steps_per_epoch > 0 else None
+    def __init__(self, total_dataset_samples: int | None, global_batch_size: int | None):
+        if (
+            total_dataset_samples is None
+            or total_dataset_samples <= 0
+            or global_batch_size is None
+            or global_batch_size <= 0
+        ):
+            self.steps_per_epoch = None
+        else:
+            self.steps_per_epoch = total_dataset_samples / global_batch_size
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         if self.steps_per_epoch is None or logs is None:
@@ -835,7 +849,29 @@ class BaseExperiment(ABC):
         # later, but the wandb on_log re-reads logs[...] each call so any earlier
         # mutation still propagates. Adding before LossLoggerCallback ensures the
         # JSONL also picks up the corrected epoch.
-        trainer.add_callback(FractionalEpochCallback(steps_per_epoch=train_dl_len))
+        # Compute total dataset samples from the underlying single datasets in
+        # the mixture (not len(train_dataloader), which counts shard-schedule
+        # iterations rather than one real pass over the data).
+        try:
+            single_datasets = getattr(trainer.train_dataset, "datasets", None)
+            if single_datasets:
+                total_dataset_samples = int(sum(len(d) for d in single_datasets))
+            else:
+                total_dataset_samples = int(len(trainer.train_dataset))
+        except Exception:
+            total_dataset_samples = None
+        world_size = int(os.environ.get("WORLD_SIZE", 1))
+        global_batch_size = (
+            int(training_args.per_device_train_batch_size)
+            * world_size
+            * int(training_args.gradient_accumulation_steps)
+        )
+        trainer.add_callback(
+            FractionalEpochCallback(
+                total_dataset_samples=total_dataset_samples,
+                global_batch_size=global_batch_size,
+            )
+        )
 
         loss_log_path = str(Path(training_args.output_dir) / "loss_log.jsonl")
         trainer.add_callback(LossLoggerCallback(output_path=loss_log_path))
