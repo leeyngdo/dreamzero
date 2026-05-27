@@ -80,6 +80,27 @@ LAYERNORM_LAYERS = [
 ]
 
 
+class FractionalEpochCallback(TrainerCallback):
+    """Inject a real fractional epoch into the trainer's log dict.
+
+    transformers.Trainer doesn't compute epoch for IterableDataset (it falls back
+    to 0.0). We know steps_per_epoch from len(train_dataloader) at init time, so
+    we can derive `global_step / steps_per_epoch` directly. Runs before the wandb
+    callback's on_log so the override propagates to wandb and to any later
+    file-logging callbacks (e.g. LossLoggerCallback).
+    """
+
+    def __init__(self, steps_per_epoch: int | None):
+        self.steps_per_epoch = steps_per_epoch if steps_per_epoch and steps_per_epoch > 0 else None
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if self.steps_per_epoch is None or logs is None:
+            return
+        frac_epoch = state.global_step / self.steps_per_epoch
+        logs["epoch"] = frac_epoch
+        state.epoch = frac_epoch
+
+
 class LossLoggerCallback(TrainerCallback):
     """Callback that writes per-step loss metrics to a JSONL file for offline analysis."""
 
@@ -90,7 +111,7 @@ class LossLoggerCallback(TrainerCallback):
         if not state.is_world_process_zero or logs is None:
             return
         entry = {"step": state.global_step}
-        for key in ("loss", "dynamics_loss_avg", "action_loss_avg", "learning_rate"):
+        for key in ("loss", "dynamics_loss_avg", "action_loss_avg", "learning_rate", "epoch"):
             if key in logs:
                 entry[key] = logs[key]
         if len(entry) > 1:  # more than just "step"
@@ -807,6 +828,14 @@ class BaseExperiment(ABC):
         run_name = cfg.training_args.get("run_name", None)
         ckpt_format_callback = CheckpointFormatCallback(run_name=run_name, exp_cfg_dir=exp_cfg_dir)
         trainer.add_callback(ckpt_format_callback)
+
+        # Fractional epoch must be injected BEFORE wandb's callback consumes the
+        # logs dict — transformers callbacks run in registration order, and the
+        # wandb integration is added by the trainer's __init__, so this add comes
+        # later, but the wandb on_log re-reads logs[...] each call so any earlier
+        # mutation still propagates. Adding before LossLoggerCallback ensures the
+        # JSONL also picks up the corrected epoch.
+        trainer.add_callback(FractionalEpochCallback(steps_per_epoch=train_dl_len))
 
         loss_log_path = str(Path(training_args.output_dir) / "loss_log.jsonl")
         trainer.add_callback(LossLoggerCallback(output_path=loss_log_path))
