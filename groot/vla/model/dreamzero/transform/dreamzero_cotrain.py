@@ -160,7 +160,17 @@ def collate(features: List[dict], tokenizer: AutoTokenizer, num_views=3, embodim
             batch['text_attention_mask_negative'] = mask
         else:
             values = [elem[key] for elem in features]
-            batch[key] = torch.from_numpy(np.stack(values))
+            try:
+                batch[key] = torch.from_numpy(np.stack(values))
+            except ValueError as e:
+                # Variable-shape samples should have been padded upstream
+                # (DreamTransform._prepare_state / _prepare_action pad time dim to
+                # max_chunk_size * horizon). Surface the offending key if a new
+                # variable-shape field is added.
+                shapes = [getattr(v, "shape", type(v).__name__) for v in values]
+                raise ValueError(
+                    f"collate: np.stack failed on key={key!r}; shapes={shapes}\n  original: {e}"
+                ) from e
     return batch
 
 
@@ -215,6 +225,15 @@ class DreamTransform(InvertibleModalityTransform):
     state_horizon: int
     action_horizon: int
     num_views: int = 3
+    # Max chunks per sample (= max_chunk_size in the data YAML). When samples come
+    # from near the end of an episode they may have fewer chunks; we pad state /
+    # action up to this many chunks so the collator gets uniform shapes across
+    # a batch. Default 1 (single-chunk) is safe for callers that don't set it.
+    max_chunk_size: int = 1
+    # Target video frame count to pad to. Samples near episode ends arrive with
+    # fewer frames (8 * num_chunks + 1) which breaks the collator. Defaulting to
+    # 0 disables padding (existing callers see unchanged behavior).
+    num_frames: int = 0
 
     # Add tokenizer attribute
     tokenizer_path: str = Field(
@@ -468,6 +487,16 @@ class DreamTransform(InvertibleModalityTransform):
         state_mask = np.zeros_like(state).astype(bool)
         state_mask[:, :n_state_dims] = True
 
+        # Pad time dim up to (max_chunk_size * state_horizon) so all samples in a
+        # batch share the same T even when a sample sits near the end of an episode
+        # and has fewer chunks than the configured max.
+        target_t = self.max_chunk_size * self.state_horizon
+        cur_t = state.shape[0]
+        if cur_t < target_t:
+            pad_t = target_t - cur_t
+            state = np.pad(state, ((0, pad_t), (0, 0)), "constant")
+            state_mask = np.pad(state_mask, ((0, pad_t), (0, 0)), "constant", constant_values=False)
+
         # We only have 1 "proprio" token to represent the entire state
         n_state_tokens = state.shape[0]
         return state, state_mask, n_state_tokens
@@ -499,6 +528,16 @@ class DreamTransform(InvertibleModalityTransform):
         actions_mask = np.zeros((n_action_tokens, self.max_action_dim), dtype=bool)
         actions_mask[:, :n_action_dims] = True
 
+        # Pad time dim up to (max_chunk_size * action_horizon) so all samples share T.
+        # Samples near episode end may produce fewer chunks; loss is masked off via
+        # actions_mask in the padded region.
+        target_t = self.max_chunk_size * self.action_horizon
+        if n_action_tokens < target_t:
+            pad_t = target_t - n_action_tokens
+            actions = np.pad(actions, ((0, pad_t), (0, 0)), "constant")
+            actions_mask = np.pad(actions_mask, ((0, pad_t), (0, 0)), "constant", constant_values=False)
+            n_action_tokens = target_t
+
         return actions, actions_mask, n_action_tokens
 
     def apply_single(self, data: dict) -> dict:
@@ -507,6 +546,15 @@ class DreamTransform(InvertibleModalityTransform):
         # 1) Prepare video and language with vlm processing.
         images = self._prepare_video(data)
         images = images.astype(np.uint8)
+        # Pad time dim if this sample is shorter than the configured target (e.g.
+        # episode-end samples have 8*num_chunks+1 < num_frames frames). Repeat the
+        # last frame rather than zero-pad: dynamics loss on a repeated frame is
+        # small and stable, whereas zero pixels would penalize the model heavily.
+        if self.num_frames > 0 and images.shape[1] < self.num_frames:
+            pad_t = self.num_frames - images.shape[1]
+            last_frame = images[:, -1:, ...]
+            tail = np.repeat(last_frame, pad_t, axis=1)
+            images = np.concatenate([images, tail], axis=1)
         language, is_lapa_instance, is_dream_instance, is_cotrain_instance = self._prepare_language(data)
         batch_data = {"images": images, "language": language}
         vlm_outputs = self._apply_vlm_processing(batch_data)
