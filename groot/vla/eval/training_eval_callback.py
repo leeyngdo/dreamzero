@@ -200,9 +200,12 @@ class TrainingEvalCallback(TrainerCallback):
             metrics = compute_eval_metrics(preds, self.eval_samples)
         except Exception as e:
             if state.is_world_process_zero:
+                import traceback
+                tb = traceback.format_exc()
                 print(
                     f"[TrainingEvalCallback] eval at step "
-                    f"{state.global_step} failed: {type(e).__name__}: {e}"
+                    f"{state.global_step} failed: {type(e).__name__}: {e}\n"
+                    f"--- TRACEBACK ---\n{tb}--- END TRACEBACK ---"
                 )
             return
 
