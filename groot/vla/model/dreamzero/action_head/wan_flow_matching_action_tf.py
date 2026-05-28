@@ -872,7 +872,10 @@ class WANPolicyHead(ActionHead):
         for index, prompt_emb in enumerate(context):
             kv_cache = kv_caches[index]
             crossattn_cache = crossattn_caches[index]
-            if not kv_cache_metadata["update_kv_cache"] and self.trt_engine is not None:
+            # `trt_engine` is initialized lazily in `post_initialize` (only called
+            # for the standalone inference server). During training it's absent,
+            # so guard with getattr instead of touching the attribute directly.
+            if not kv_cache_metadata["update_kv_cache"] and getattr(self, "trt_engine", None) is not None:
                 obs_noise_pred, action_noise_pred = self.trt_engine(
                     noisy_input,
                     timestep,
