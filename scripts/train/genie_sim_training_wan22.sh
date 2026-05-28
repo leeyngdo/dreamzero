@@ -131,4 +131,9 @@ torchrun --nproc_per_node $NUM_GPUS --standalone groot/vla/experiment/experiment
     text_encoder_pretrained_path=$WAN22_CKPT_DIR/models_t5_umt5-xxl-enc-bf16.pth \
     image_encoder_pretrained_path=$IMAGE_ENCODER_DIR/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth \
     vae_pretrained_path=$WAN22_CKPT_DIR/Wan2.2_VAE.pth \
-    tokenizer_path=$TOKENIZER_DIR
+    tokenizer_path=$TOKENIZER_DIR \
+    eval_cfg.enable=true \
+    eval_cfg.dataset_root=$GENIE_SIM_DATA_ROOT \
+    eval_cfg.eval_every=100 \
+    eval_cfg.num_episodes=4 \
+    eval_cfg.num_inference_steps=4

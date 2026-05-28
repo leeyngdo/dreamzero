@@ -55,6 +55,8 @@ from groot.vla.experiment.utils import (
     mprint,
     safe_save_model_for_hf_trainer,
 )
+from groot.vla.eval.episode_loader import GenieSimEvalLoader
+from groot.vla.eval.training_eval_callback import TrainingEvalCallback
 from groot.vla.utils.timer import ContextTimer
 
 # Fix resume: https://github.com/huggingface/transformers/pull/34632/files
@@ -881,6 +883,39 @@ class BaseExperiment(ABC):
 
         loss_log_path = str(Path(training_args.output_dir) / "loss_log.jsonl")
         trainer.add_callback(LossLoggerCallback(output_path=loss_log_path))
+
+        # Optional in-training eval callback.
+        # Enable via Hydra: eval_cfg.enable=true eval_cfg.eval_every=100
+        #                   eval_cfg.dataset_root=/mnt/robot/...
+        eval_cfg = cfg.get("eval_cfg", None)
+        if eval_cfg is not None and eval_cfg.get("enable", False):
+            try:
+                eval_loader = GenieSimEvalLoader(
+                    dataset_root=eval_cfg["dataset_root"],
+                    split=eval_cfg.get("split", "val"),
+                    num_episodes=int(eval_cfg.get("num_episodes", 4)),
+                    num_frames=int(cfg.get("num_frames", 33)),
+                    action_horizon=int(cfg.get("action_horizon", 24)),
+                    max_chunk_size=int(cfg.get("max_chunk_size", 4)),
+                    fps=int(eval_cfg.get("fps", 30)),
+                    seed=int(eval_cfg.get("seed", 1234)),
+                )
+                trainer.add_callback(
+                    TrainingEvalCallback(
+                        eval_loader=eval_loader,
+                        eval_every=int(eval_cfg.get("eval_every", 100)),
+                        num_inference_steps=int(eval_cfg.get("num_inference_steps", 4)),
+                        skip_step_zero=bool(eval_cfg.get("skip_step_zero", True)),
+                    )
+                )
+                mprint(
+                    f"[Eval] TrainingEvalCallback registered "
+                    f"(every {eval_cfg.get('eval_every', 100)} steps, "
+                    f"{eval_cfg.get('num_episodes', 4)} episodes, "
+                    f"{eval_cfg.get('num_inference_steps', 4)} denoising steps)"
+                )
+            except Exception as exc:
+                mprint(f"[Eval] Could not register TrainingEvalCallback: {exc}")
 
 
         # Add profiling callback (local profiling only, no S3 upload)

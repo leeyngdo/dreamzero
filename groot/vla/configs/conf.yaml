@@ -128,6 +128,18 @@ training_args:
 # === Profiling Arguments ===
 profile_dir: null
 
+# === In-Training Eval Config ===
+eval_cfg:
+  enable: false
+  dataset_root: ???
+  split: val
+  num_episodes: 4
+  num_inference_steps: 4
+  eval_every: 100
+  fps: 30
+  seed: 1234
+  skip_step_zero: true
+
 # === Disable Hydra Config ===
 hydra:
   output_subdir: null
