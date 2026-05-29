@@ -134,6 +134,6 @@ torchrun --nproc_per_node $NUM_GPUS --standalone groot/vla/experiment/experiment
     tokenizer_path=$TOKENIZER_DIR \
     eval_cfg.enable=true \
     eval_cfg.dataset_root=$GENIE_SIM_DATA_ROOT \
-    eval_cfg.eval_every=10 \
+    eval_cfg.eval_every=100 \
     eval_cfg.num_episodes=4 \
     eval_cfg.num_inference_steps=4
