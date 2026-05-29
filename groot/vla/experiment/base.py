@@ -905,14 +905,25 @@ class BaseExperiment(ABC):
                     fps=int(eval_cfg.get("fps", 30)),
                     seed=int(eval_cfg.get("seed", 1234)),
                 )
-                trainer.add_callback(
-                    TrainingEvalCallback(
-                        eval_loader=eval_loader,
-                        eval_every=int(eval_cfg.get("eval_every", 100)),
-                        num_inference_steps=int(eval_cfg.get("num_inference_steps", 4)),
-                        skip_step_zero=bool(eval_cfg.get("skip_step_zero", True)),
-                    )
+                eval_callback = TrainingEvalCallback(
+                    eval_loader=eval_loader,
+                    eval_every=int(eval_cfg.get("eval_every", 100)),
+                    num_inference_steps=int(eval_cfg.get("num_inference_steps", 4)),
+                    skip_step_zero=bool(eval_cfg.get("skip_step_zero", True)),
                 )
+                trainer.add_callback(eval_callback)
+                # TrainingEvalCallback.on_log injects eval/* into the logs
+                # dict; LossLoggerCallback / WandbCallback then read from that
+                # same dict. transformers callback_handler iterates callbacks
+                # in list order, so the injector MUST run before its consumers
+                # to be observed. Same trick we used for FractionalEpochCallback.
+                try:
+                    handler_cbs = trainer.callback_handler.callbacks
+                    if eval_callback in handler_cbs:
+                        handler_cbs.remove(eval_callback)
+                    handler_cbs.insert(0, eval_callback)
+                except Exception:
+                    pass  # If insertion fails the JSONL won't pick up eval/* but training stays alive.
                 mprint(
                     f"[Eval] TrainingEvalCallback registered "
                     f"(every {eval_cfg.get('eval_every', 100)} steps, "
