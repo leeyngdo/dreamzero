@@ -130,6 +130,11 @@ class LossLoggerCallback(TrainerCallback):
         for key in ("loss", "dynamics_loss_avg", "action_loss_avg", "learning_rate", "epoch"):
             if key in logs:
                 entry[key] = logs[key]
+        # Capture any eval/* keys injected by TrainingEvalCallback too so the
+        # JSONL is a complete record (otherwise eval metrics live only in wandb).
+        for key, val in logs.items():
+            if key.startswith("eval/"):
+                entry[key] = val
         if len(entry) > 1:  # more than just "step"
             with open(self.output_path, "a") as f:
                 f.write(json.dumps(entry) + "\n")
