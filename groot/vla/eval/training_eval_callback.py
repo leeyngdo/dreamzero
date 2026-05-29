@@ -221,7 +221,11 @@ class TrainingEvalCallback(TrainerCallback):
         # keep the data on every rank so the next-log-event injection logic
         # stays symmetric.
         self._pending = {
-            (k if k.startswith("eval/") else f"eval/{k}"): _to_python_float(v)
+            # Use the "eval_" prefix (underscore) at source so transformers'
+            # WandbCallback.rewrite_logs converts to "eval/" in wandb.
+            # Without this, wandb sees "eval/X" as a non-eval key and slaps
+            # an extra "train/" prefix, producing "train/eval/X" in the UI.
+            (k if k.startswith("eval_") else f"eval_{k}"): _to_python_float(v)
             for k, v in metrics.items()
         }
 

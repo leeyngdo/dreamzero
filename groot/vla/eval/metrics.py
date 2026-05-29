@@ -64,15 +64,15 @@ def compute_eval_metrics(
     if n_episodes == 0:
         # Return zeros to avoid breaking the training callback on empty eval.
         return {
-            "eval/joint_l1_norm": 0.0,
-            "eval/effector_l1_norm": 0.0,
-            "eval/atv_pred": 0.0,
-            "eval/atv_gt": 0.0,
-            "eval/jerk_rms_pred": 0.0,
-            "eval/jerk_rms_pred_x1k": 0.0,
-            "eval/jerk_rms_gt": 0.0,
-            "eval/jerk_rms_gt_x1k": 0.0,
-            "eval/n_episodes": 0.0,
+            "eval_joint_l1_norm": 0.0,
+            "eval_effector_l1_norm": 0.0,
+            "eval_atv_pred": 0.0,
+            "eval_atv_gt": 0.0,
+            "eval_jerk_rms_pred": 0.0,
+            "eval_jerk_rms_pred_x1k": 0.0,
+            "eval_jerk_rms_gt": 0.0,
+            "eval_jerk_rms_gt_x1k": 0.0,
+            "eval_n_episodes": 0.0,
         }
 
     # Stack predictions and the first action_horizon timesteps of each GT.
@@ -122,15 +122,15 @@ def compute_eval_metrics(
     jerk_gt = jerk_rms(gt_stack, dt=dt)
 
     return {
-        "eval/joint_l1_norm": joint_l1,
-        "eval/effector_l1_norm": eff_l1,
-        "eval/atv_pred": float(atv_pred),
-        "eval/atv_gt": float(atv_gt),
-        "eval/jerk_rms_pred": float(jerk_pred),
-        "eval/jerk_rms_pred_x1k": float(jerk_pred * 1e-3),
-        "eval/jerk_rms_gt": float(jerk_gt),
-        "eval/jerk_rms_gt_x1k": float(jerk_gt * 1e-3),
-        "eval/n_episodes": float(n_episodes),
+        "eval_joint_l1_norm": joint_l1,
+        "eval_effector_l1_norm": eff_l1,
+        "eval_atv_pred": float(atv_pred),
+        "eval_atv_gt": float(atv_gt),
+        "eval_jerk_rms_pred": float(jerk_pred),
+        "eval_jerk_rms_pred_x1k": float(jerk_pred * 1e-3),
+        "eval_jerk_rms_gt": float(jerk_gt),
+        "eval_jerk_rms_gt_x1k": float(jerk_gt * 1e-3),
+        "eval_n_episodes": float(n_episodes),
     }
 
 
@@ -178,13 +178,13 @@ if __name__ == "__main__":
         print(f"  {k}: {v!r}")
 
     # Sanity checks.
-    assert metrics["eval/joint_l1_norm"] > 0, "random vs linear should diff"
-    assert metrics["eval/effector_l1_norm"] > 0
-    assert metrics["eval/atv_pred"] > 0, "random has nonzero ATV"
-    assert metrics["eval/atv_gt"] > 0, "linear with nonzero slope has ATV>0"
-    assert metrics["eval/jerk_rms_gt"] == 0.0, (
+    assert metrics["eval_joint_l1_norm"] > 0, "random vs linear should diff"
+    assert metrics["eval_effector_l1_norm"] > 0
+    assert metrics["eval_atv_pred"] > 0, "random has nonzero ATV"
+    assert metrics["eval_atv_gt"] > 0, "linear with nonzero slope has ATV>0"
+    assert metrics["eval_jerk_rms_gt"] == 0.0, (
         f"linear GT should have exactly zero jerk_rms; "
         f"got {metrics['eval/jerk_rms_gt']!r}"
     )
-    assert metrics["eval/n_episodes"] == 3.0
+    assert metrics["eval_n_episodes"] == 3.0
     print("smoke test OK; jerk_rms_gt is exactly 0")

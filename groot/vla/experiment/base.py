@@ -130,10 +130,13 @@ class LossLoggerCallback(TrainerCallback):
         for key in ("loss", "dynamics_loss_avg", "action_loss_avg", "learning_rate", "epoch"):
             if key in logs:
                 entry[key] = logs[key]
-        # Capture any eval/* keys injected by TrainingEvalCallback too so the
-        # JSONL is a complete record (otherwise eval metrics live only in wandb).
+        # Capture any eval_*/eval/* keys injected by TrainingEvalCallback too
+        # so the JSONL is a complete record. Normalize to "eval/" form for the
+        # JSONL — wandb gets the same logical metric via rewrite_logs("eval_").
         for key, val in logs.items():
-            if key.startswith("eval/"):
+            if key.startswith("eval_"):
+                entry["eval/" + key[len("eval_"):]] = val
+            elif key.startswith("eval/"):
                 entry[key] = val
         if len(entry) > 1:  # more than just "step"
             with open(self.output_path, "a") as f:
