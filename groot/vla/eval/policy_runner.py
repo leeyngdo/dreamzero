@@ -104,11 +104,17 @@ class EvalPolicyRunner:
         tokenizer: Any,
         num_inference_steps: int = 4,
         device: str = "cuda",
+        state_horizon: int = 1,
     ):
         self.model = model
         self.tokenizer = tokenizer
         self.num_inference_steps = int(num_inference_steps)
         self.device = device
+        # Inference processes a single chunk per call, so state passed to the
+        # action head must be (B, state_horizon, max_state_dim) — NOT the full
+        # (B, max_chunk_size*state_horizon, max_state_dim) the train collator
+        # uses. The default matches genie_sim wan22 config.
+        self.state_horizon = int(state_horizon)
 
     # ------------------------------------------------------------------
     # Public API
@@ -222,9 +228,15 @@ class EvalPolicyRunner:
         images = torch.from_numpy(images_np)
 
         # --- State: (B, max_chunk_size*state_horizon, max_state_dim) -------
+        # Inference processes ONE chunk per call (current_start_frame advances
+        # between calls). The action register length asserted in
+        # causal_rope_action_apply_polar is num_action_per_block +
+        # num_state_per_block, so we must pass only ONE chunk's worth of state
+        # (the anchor at the start of the chunk). Slice off the rest.
         state_np = np.stack(
             [np.asarray(s["state"], dtype=np.float32) for s in samples], axis=0
         )
+        state_np = state_np[:, : self.state_horizon, :]
         state = torch.from_numpy(state_np)
         state_mask = torch.zeros_like(state, dtype=torch.bool)
 
